@@ -111,7 +111,8 @@ class WTFormsAppTestCase(FlaskMongoEngineTestCase):
                 meta = {'allow_inheritance': True}
                 title = db.StringField(required=True, max_length=200)
                 posted = db.DateTimeField(default=datetime.datetime.now)
-                tags = db.ListField(db.StringField())
+                tags = db.ListField(
+                    db.StringField(min_length=5, max_length=30))
 
             class TextPost(BlogPost):
                 email = db.EmailField(required=False)
@@ -119,14 +120,23 @@ class WTFormsAppTestCase(FlaskMongoEngineTestCase):
 
             class LinkPost(BlogPost):
                 url = db.StringField(required=True)
-                interest =  db.DecimalField(required=True)
+                interest = db.DecimalField(required=True)
 
             # Create a text-based post
             TextPostForm = model_form(TextPost)
 
+            # 'content' field is missing altough required
             form = TextPostForm(MultiDict({
                 'title': 'Using MongoEngine',
                 'tags': ['mongodb', 'mongoengine']}))
+
+            self.assertFalse(form.validate())
+
+            # 'tags' contains string shorter than min_length
+            form = TextPostForm(MultiDict({
+                'title': 'Using MongoEngine',
+                'content': 'See the tutorial',
+                'tags': ['db', 'mongodb', 'mongoengine']}))
 
             self.assertFalse(form.validate())
 
