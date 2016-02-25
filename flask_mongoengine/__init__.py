@@ -22,6 +22,7 @@ from .pagination import *
 from .metadata import *
 from .json import overide_json_encoder
 from .wtf import WtfBaseField
+from .connection import create_connection
 
 def _patch_base_field(object, name):
     """
@@ -70,31 +71,6 @@ def _include_mongoengine(obj):
                 # patch BaseField if available
                 _patch_base_field(obj, key)
 
-
-def _create_connection(conn_settings):
-
-    # Handle multiple connections recursively
-    if isinstance(conn_settings, list):
-        connections = {}
-        for conn in conn_settings:
-            connections[conn.get('alias')] = _create_connection(conn)
-        return connections
-
-    # Ugly dict comprehention in order to support python 2.6
-    conn = dict((k.lower(), v) for k, v in conn_settings.items() if v is not None)
-
-    if 'replicaset' in conn:
-        conn['replicaSet'] = conn.pop('replicaset')
-
-    # Handle uri style connections
-    if "://" in conn.get('host', ''):
-        uri_dict = uri_parser.parse_uri(conn['host'])
-        conn['db'] = uri_dict['database']
-
-    return mongoengine.connect(conn.pop('db', 'test'), **conn)
-
-
-
 class MongoEngine(object):
 
     def __init__(self, app=None, config=None):
@@ -128,16 +104,17 @@ class MongoEngine(object):
 
         if 'MONGODB_SETTINGS' in config:
             # Connection settings provided as a dictionary.
-            connection = _create_connection(config['MONGODB_SETTINGS'])
+            connection = create_connection(config['MONGODB_SETTINGS'])
         else:
             # Connection settings provided in standard format.
             settings = {'alias': config.get('MONGODB_ALIAS', None),
                         'db': config.get('MONGODB_DB', None),
+                        'preserve_testdb' : config.get('PRESERVE_TEST_DB', False),
                         'host': config.get('MONGODB_HOST', None),
                         'password': config.get('MONGODB_PASSWORD', None),
                         'port': config.get('MONGODB_PORT', None),
                         'username': config.get('MONGODB_USERNAME', None)}
-            connection = _create_connection(settings)
+            connection = create_connection(settings)
 
         # Store objects in application instance so that multiple apps do
         # not end up accessing the same objects.
