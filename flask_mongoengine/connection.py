@@ -3,16 +3,6 @@ import pymongo, shutil, subprocess, tempfile
 from pymongo import uri_parser
 from flask import current_app
 
-"""
-Singleton DB test instance to manage
-temporary MongoDB instance for test cases.
-
-Use this for testing purpose only. The
-instance is automatically destroyed at
-the end of the program.
-
-"""
-
 __all__ = ['create_connection', ]
 
 _tmpdir = tempfile.mkdtemp()
