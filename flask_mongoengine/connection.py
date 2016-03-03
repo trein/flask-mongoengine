@@ -32,7 +32,6 @@ def disconnect(alias=DEFAULT_CONNECTION_NAME, preserved=False):
         if not preserved:
             shutil.rmtree(_tmpdir, ignore_errors=True)
 
-
 def get_connection(alias=DEFAULT_CONNECTION_NAME):
     global _connections
 
