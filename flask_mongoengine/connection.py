@@ -55,7 +55,7 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
 
         if current_app.config['TESTING']:
             if (conn_host.startswith('mongomock://') and
-                mongoengine.__version__ < (0, 10, 6)):
+                mongoengine.VERSION < (0, 10, 6)):
                 # Use MongoClient from mongomock
                 try:
                     import mongomock
@@ -64,7 +64,7 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
                                        'to mock MongoEngine.')
                 connection_class = mongomock.MongoClient
 
-            elif (mongoengine.__version__ >= (0, 10, 6) and
+            elif (mongoengine.VERSION >= (0, 10, 6) and
                   conn_host.startswith('mongomock://')):
                 # Let mongoengine handle the default
                 _connections[alias] = mongoengine.connect(db_name, **conn_settings)
