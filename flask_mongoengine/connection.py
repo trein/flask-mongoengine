@@ -1,4 +1,4 @@
-import atexit, os, time, mongoengine
+import atexit, os, time, mongoengine, sys
 import shutil, subprocess, tempfile
 from flask import current_app
 from pymongo import MongoClient, ReadPreference, errors
@@ -14,7 +14,6 @@ _connections = {}
 _tmpdir = tempfile.mkdtemp()
 _conn = None
 _process = None
-_dbs = {}
 
 def disconnect(alias=DEFAULT_CONNECTION_NAME, preserved=False):
     global _connections, _dbsm, _process
@@ -22,8 +21,6 @@ def disconnect(alias=DEFAULT_CONNECTION_NAME, preserved=False):
     if alias in _connections:
         get_connection(alias=alias).close()
         del _connections[alias]
-    if alias in _dbs:
-        del _dbs[alias]
 
     if _process:
         _process.terminate()
@@ -79,10 +76,12 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
 
         try:
             connection = None
+            connection_iter_items = _connection_settings.items() \
+                if (sys.version_info >= (3, 0)) else _connection_settings.iteritems()
+
             # check for shared connections
-            connection_settings_iterator = (
-                    (db_alias, settings.copy())
-                    for db_alias, settings in _connection_settings.iteritems())
+            connection_settings_iterator = \
+                ((db_alias, settings.copy()) for db_alias, settings in connection_iter_items)
 
             for db_alias, connection_settings in connection_settings_iterator:
                 connection_settings.pop('name', None)
@@ -93,8 +92,10 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
                     connection = _connections[db_alias]
                     break
 
-            _connections[alias] = connection if connection else connection_class(**conn_settings)
-        except Exception, e:
+            _connections[alias] = connection \
+                if connection else connection_class(**conn_settings)
+
+        except Exception as e:
             raise ConnectionError("Cannot connect to database %s :\n%s" % (alias, e))
     return _connections[alias]
 
