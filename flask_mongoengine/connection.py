@@ -4,7 +4,7 @@ from flask import current_app
 from pymongo import MongoClient, ReadPreference, errors
 from mongoengine.python_support import IS_PYMONGO_3
 
-__all__ = ['ConnectionError', 'connect', 'register_connection',
+__all__ = ['create_connection', 'disconnect', 'get_connection',
            'DEFAULT_CONNECTION_NAME']
 
 DEFAULT_CONNECTION_NAME = 'default-sandbox'
