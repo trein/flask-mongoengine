@@ -12,17 +12,17 @@ else:
     from mongoengine.base.fields import BaseField
 
 
-from mongoengine.queryset import MultipleObjectsReturned, DoesNotExist, QuerySet
+from mongoengine.queryset import MultipleObjectsReturned, \
+    DoesNotExist, QuerySet
+
 from mongoengine.base import ValidationError
-
 from pymongo import uri_parser
-
 from .sessions import *
 from .pagination import *
 from .metadata import *
 from .json import overide_json_encoder
 from .wtf import WtfBaseField
-from .connection import create_connection
+from .connection import *
 
 def _patch_base_field(object, name):
     """
@@ -109,6 +109,15 @@ class MongoEngine(object):
         # not end up accessing the same objects.
         app.extensions['mongoengine'][self] = {'app': app,
                                                'conn': connection}
+
+    def disconnect(self):
+        conn_settings = fetch_connection_settings(current_app.config)
+        if isinstance(conn_settings, list):
+            for setting in conn_settings:
+                disconnect(setting['alias'], setting['preserve_temp_db'])
+        else:
+            disconnect(conn_settings['alias'], conn_settings['preserve_temp_db'])
+        return True
 
     @property
     def connection(self):

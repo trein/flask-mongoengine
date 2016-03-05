@@ -1,11 +1,11 @@
 import atexit, os, time, mongoengine, sys
 import shutil, subprocess, tempfile
 from flask import current_app
-from pymongo import MongoClient, ReadPreference, errors
+from pymongo import MongoClient, ReadPreference, errors, uri_parser
 from mongoengine.python_support import IS_PYMONGO_3
 
 __all__ = ['create_connection', 'disconnect', 'get_connection',
-           'DEFAULT_CONNECTION_NAME']
+           'DEFAULT_CONNECTION_NAME', 'fetch_connection_settings']
 
 DEFAULT_CONNECTION_NAME = 'default-sandbox'
 
@@ -50,8 +50,13 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
         conn_settings.pop('password', None)
         conn_settings.pop('authentication_source', None)
 
-        if current_app.config['TESTING']:
-            if (conn_host.startswith('mongomock://') and
+        if current_app.config.get('TESTING', None):
+            if current_app.config.get('TEMP_DB', None):
+                db_alias = conn_settings['alias']
+                preserved = conn_settings.get('preserve_temp_db', False)
+                return _register_test_connection(conn_host, db_alias, preserved)
+
+            elif (conn_host.startswith('mongomock://') and
                 mongoengine.VERSION < (0, 10, 6)):
                 # Use MongoClient from mongomock
                 try:
@@ -60,16 +65,9 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
                     raise RuntimeError('You need mongomock installed '
                                        'to mock MongoEngine.')
                 connection_class = mongomock.MongoClient
-
-            elif (mongoengine.VERSION >= (0, 10, 6) and
-                  conn_host.startswith('mongomock://')):
+            else:
                 # Let mongoengine handle the default
                 _connections[alias] = mongoengine.connect(db_name, **conn_settings)
-
-            elif current_app.config['TEMP_DB']:
-                db_alias = conn_settings['alias']
-                preserved = conn_settings.get('preserve_temp_db', False)
-                return _register_test_connection(conn_host, db_alias, preserved)
         else:
             # Let mongoengine handle the default
             _connections[alias] = mongoengine.connect(db_name, **conn_settings)
@@ -137,6 +135,75 @@ def _register_test_connection(port, db_alias, preserved):
         _connections[db_alias] = _conn
     return _conn
 
+def _resolve_settings(conn_setting, removePass=True):
+    if conn_setting and isinstance(conn_setting, dict):
+        read_preference = False
+        if IS_PYMONGO_3:
+            read_preference = ReadPreference.PRIMARY
+
+        resolved = {}
+        resolved['read_preference'] = read_preference
+        resolved['alias'] = conn_setting.get('MONGODB_ALIAS', DEFAULT_CONNECTION_NAME)
+        resolved['name'] = conn_setting.get('MONGODB_DB', 'test')
+        resolved['preserve_temp_db'] = conn_setting.get('PRESERVE_TEMP_DB', False)
+        resolved['host'] = conn_setting.get('MONGODB_HOST', 'localhost')
+        resolved['password'] = conn_setting.get('MONGODB_PASSWORD', None)
+        resolved['port'] = conn_setting.get('MONGODB_PORT', 27017)
+        resolved['username'] = conn_setting.get('MONGODB_USERNAME', None)
+        resolved['replicaSet'] = conn_setting.pop('replicaset', None)
+
+        host = resolved['host']
+        # Handle uri style connections
+        if host.startswith('mongodb://'):
+            uri_dict = uri_parser.parse_uri(host)
+            if uri_dict['database']:
+                resolved['host'] = uri_dict['database']
+            if uri_dict['password']:
+                resolved['password'] = uri_dict['password']
+            if uri_dict['username']:
+                resolved['username'] = uri_dict['username']
+            if uri_dict['options'] and uri_dict['options']['replicaset']:
+                resolved['replicaSet'] = uri_dict['options']['replicaset']
+
+        if removePass:
+            resolved.pop('password')
+        return resolved
+    return conn_setting
+
+def fetch_connection_settings(config, removePass=True):
+    """
+    Fetch DB connection settings from FlaskMongoEngine
+    application instance configuration. For backward
+    compactibility reasons the settings name has not
+    been replaced.
+
+    It has instead been mapped correctly
+    to avoid connection issues.
+
+    @param config:          FlaskMongoEngine instance config
+
+    @param removePass:      Flag to instruct the method to either
+                            remove password or maintain as is.
+                            By default a call to this method returns
+                            settings without password.
+
+    """
+
+    if 'MONGODB_SETTINGS' in config:
+        settings = config['MONGODB_SETTINGS']
+        if isinstance(settings, list):
+            # List of connection settings.
+            settings_list = []
+            for setting in settings:
+                settings_list.append(_resolve_settings(setting, removePass))
+            return settings_list
+        else:
+            # Connection settings provided as a dictionary.
+            return _resolve_settings(settings, removePass)
+    else:
+        # Connection settings provided in standard format.
+        return _resolve_settings(config, removePass)
+
 def create_connection(config):
     """
     Connection is created base on application configuration
@@ -166,55 +233,24 @@ def create_connection(config):
     @param config: Flask-MongoEngine application configuration.
 
     """
-    global _connections, _connection_settings
+    global _connection_settings
 
     if config is None or not isinstance(config, dict):
         raise Exception("Invalid application configuration");
 
-    read_preference = False
-    if IS_PYMONGO_3:
-        read_preference = ReadPreference.PRIMARY
-
-    conn_settings = {}
-    alias = config.get('MONGODB_ALIAS', DEFAULT_CONNECTION_NAME)
-
-    # Alway create new connection unless already
-    # exist
-    if alias not in _connections:
-        if 'MONGODB_SETTINGS' in config:
-            # Connection settings provided as a dictionary.
-            conn_settings = config['MONGODB_SETTINGS']
-        else:
-            # Connection settings provided in standard format.
-            conn_settings = {
-                'alias'             : alias,
-                'name'              : config.get('MONGODB_DB', 'test'),
-                'preserve_temp_db'  : config.get('PRESERVE_TEMP_DB', False),
-                'host'              : config.get('MONGODB_HOST', 'localhost'),
-                'password'          : config.get('MONGODB_PASSWORD', None),
-                'port'              : config.get('MONGODB_PORT', 27017),
-                'username'          : config.get('MONGODB_USERNAME', None),
-                'read_preference'   : read_preference,
-            }
-
-        # Ugly dict comprehention in order to support python 2.6
-        conn = dict((k.lower(), v) for k, v in conn_settings.items() if v is not None)
-
-        if 'db' in conn:
-            conn['name'] = conn.pop('name', 'test')
-        if 'replicaset' in conn:
-            conn['replicaSet'] = conn.pop('replicaset')
-
-        _connection_settings[alias] = conn
+    conn_settings = fetch_connection_settings(config, False)
 
     # Handle multiple connections recursively
     if isinstance(conn_settings, list):
         connections = {}
-        for conn in conn_settings:
+        for conn_setting in conn_settings:
+            alias = conn_setting['alias']
             connections[alias] = get_connection(alias)
         return connections
-
-    return get_connection(alias)
+    else:
+        alias = conn_settings['alias']
+        _connection_settings[alias] = conn_settings
+        return get_connection(alias)
 
 # Support for old naming convensions
 _create_connection = create_connection
