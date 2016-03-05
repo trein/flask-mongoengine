@@ -3,17 +3,22 @@ import shutil, subprocess, tempfile
 from flask import current_app
 from pymongo import MongoClient, ReadPreference, errors, uri_parser
 from mongoengine.python_support import IS_PYMONGO_3
+from subprocess import Popen, PIPE
 
 __all__ = ['create_connection', 'disconnect', 'get_connection',
-           'DEFAULT_CONNECTION_NAME', 'fetch_connection_settings']
+           'DEFAULT_CONNECTION_NAME', 'fetch_connection_settings',
+           'InvalidSettingsError']
 
 DEFAULT_CONNECTION_NAME = 'default-sandbox'
 
 _connection_settings = {}
 _connections = {}
-_tmpdir = tempfile.mkdtemp()
+_tmpdir = None
 _conn = None
 _process = None
+
+class InvalidSettingsError(Exception):
+    pass
 
 def disconnect(alias=DEFAULT_CONNECTION_NAME, preserved=False):
     global _connections, _dbsm, _process
@@ -28,6 +33,8 @@ def disconnect(alias=DEFAULT_CONNECTION_NAME, preserved=False):
         _process = None
         if not preserved:
             shutil.rmtree(_tmpdir, ignore_errors=True)
+            os.remove("{0}/{1}".\
+                format(tempfile.gettempdir(), 'mongodb-27111.sock'))
 
 def get_connection(alias=DEFAULT_CONNECTION_NAME):
     global _connections
@@ -50,11 +57,20 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
         conn_settings.pop('password', None)
         conn_settings.pop('authentication_source', None)
 
-        if current_app.config.get('TESTING', None):
-            if current_app.config.get('TEMP_DB', None):
+        is_test = current_app.config.get('TESTING', False)
+        temp_db = current_app.config.get('TEMP_DB', False)
+        preserved = current_app.config.get('PRESERVE_TEMP_DB', False)
+        if (not isinstance(is_test, bool)
+            or not isinstance(temp_db, bool)
+            or not isinstance(preserved, bool)):
+            msg = '`TESTING`, `TEMP_DB`, and `PRESERVE_TEMP_DB` must be boolean values'
+            raise InvalidSettingsError(msg)
+
+        if is_test:
+            if temp_db:
                 db_alias = conn_settings['alias']
-                preserved = conn_settings.get('preserve_temp_db', False)
-                return _register_test_connection(conn_host, db_alias, preserved)
+                port = conn_settings['port']
+                return _register_test_connection(port, db_alias, preserved)
 
             elif (conn_host.startswith('mongomock://') and
                 mongoengine.VERSION < (0, 10, 6)):
@@ -62,8 +78,13 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
                 try:
                     import mongomock
                 except ImportError:
-                    raise RuntimeError('You need mongomock installed '
-                                       'to mock MongoEngine.')
+                    msg = 'You need mongomock installed to mock MongoEngine.'
+                    raise RuntimeError(msg)
+
+                # `mongomock://` is not a valid url prefix and
+                # must be replaced by `mongodb://`
+                conn_settings['host'] = \
+                    conn_host.replace('mongomock://', 'mongodb://', 1)
                 connection_class = mongomock.MongoClient
             else:
                 # Let mongoengine handle the default
@@ -90,50 +111,76 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
                     connection = _connections[db_alias]
                     break
 
-            _connections[alias] = connection \
+            _connections[alias] = connection\
                 if connection else connection_class(**conn_settings)
 
         except Exception as e:
             raise ConnectionError("Cannot connect to database %s :\n%s" % (alias, e))
     return _connections[alias]
 
+def _sys_exec(cmd, shell=True, env=None):
+    if env is None:
+        env = os.environ
+
+    a = Popen(cmd, shell=shell, stdout=PIPE, stderr=PIPE, env=env)
+    a.wait()  # Wait for process to terminate
+    if a.returncode:  # Not 0 => Error has occured
+        raise Exception(a.communicate()[1])
+
+    return a.communicate()[0]
+
 def _register_test_connection(port, db_alias, preserved):
-    # TEMP_DB setting uses 27111 as
-    # default port
-    if port == 27017:
-        port = 27111
+    # Lets check MongoDB is installed locally
+    # before making connection to it
 
-    _conn = _connections.get(db_alias, None)
+    try:
+        found = _sys_exec("mongod --version") or False
+    except:
+        msg = 'You need `MongoDB` service installed on localhost'\
+              ' be able to create a TEMP_DB instance.'
+        raise RuntimeError(msg)
 
-    if _conn is None:
-        _process = subprocess.Popen([
-                'mongod', '--bind_ip', 'localhost',
-                '--port', str(port),
-                '--dbpath', _tmpdir,
-                '--nojournal', '--nohttpinterface',
-                '--noauth', '--smallfiles',
-                '--syncdelay', '0',
-                '--maxConns', '10',
-                '--nssize', '1', ],
-                stdout=open(os.devnull, 'wb'),
-                stderr=subprocess.STDOUT)
-        atexit.register(disconnect, preserved=preserved)
+    if found:
+        # TEMP_DB setting uses 27111 as
+        # default port
+        if not port or port == 27017:
+            port = 27111
 
-        # wait for the instance db to be ready
-        # before opening a Connection.
-        for i in range(3):
-            time.sleep(0.1)
-            try:
-                _conn = MongoClient('localhost', port)
-            except errors.ConnectionFailure:
-                continue
+        _tmpdir = current_app.config.get('TEMP_DB_LOC', tempfile.mkdtemp())
+        print("@@ TEMP_DB_LOC  = " + _tmpdir)
+        print("@@ TEMP_DB port = " + str(port))
+        print("@@ TEMP_DB host = localhost")
+        _conn = _connections.get(db_alias, None)
+
+        if _conn is None:
+            _process = subprocess.Popen([
+                    'mongod', '--bind_ip', 'localhost',
+                    '--port', str(port),
+                    '--dbpath', _tmpdir,
+                    '--nojournal', '--nohttpinterface',
+                    '--noauth', '--smallfiles',
+                    '--syncdelay', '0',
+                    '--maxConns', '10',
+                    '--nssize', '1', ],
+                    stdout=open(os.devnull, 'wb'),
+                    stderr=subprocess.STDOUT)
+            atexit.register(disconnect, preserved=preserved)
+
+            # wait for the instance db to be ready
+            # before opening a Connection.
+            for i in range(3):
+                time.sleep(0.1)
+                try:
+                    _conn = MongoClient('localhost', port)
+                except errors.ConnectionFailure:
+                    continue
+                else:
+                    break
             else:
-                break
-        else:
-            msg = 'Cannot connect to the mongodb test instance'
-            raise mongoengine.ConnectionError(msg)
-        _connections[db_alias] = _conn
-    return _conn
+                msg = 'Cannot connect to the mongodb test instance'
+                raise mongoengine.ConnectionError(msg)
+            _connections[db_alias] = _conn
+        return _conn
 
 def _resolve_settings(conn_setting, removePass=True):
     if conn_setting and isinstance(conn_setting, dict):
@@ -145,7 +192,6 @@ def _resolve_settings(conn_setting, removePass=True):
         resolved['read_preference'] = read_preference
         resolved['alias'] = conn_setting.get('MONGODB_ALIAS', DEFAULT_CONNECTION_NAME)
         resolved['name'] = conn_setting.get('MONGODB_DB', 'test')
-        resolved['preserve_temp_db'] = conn_setting.get('PRESERVE_TEMP_DB', False)
         resolved['host'] = conn_setting.get('MONGODB_HOST', 'localhost')
         resolved['password'] = conn_setting.get('MONGODB_PASSWORD', None)
         resolved['port'] = conn_setting.get('MONGODB_PORT', 27017)
@@ -167,6 +213,7 @@ def _resolve_settings(conn_setting, removePass=True):
 
         if removePass:
             resolved.pop('password')
+
         return resolved
     return conn_setting
 
@@ -210,7 +257,8 @@ def create_connection(config):
     settings. Application settings which is enabled as TESTING
     can submit MongoMock URI or enable TEMP_DB setting to provide
     default temporary MongoDB instance on localhost for testing
-    purposes.
+    purposes. This connection is initiated with a separate temporary
+    directory location.
 
     Unless PRESERVE_TEST_DB is setting is enabled in application
     configuration, temporary MongoDB instance will be deleted when
@@ -230,6 +278,11 @@ def create_connection(config):
     when application go out of scope:
         >> app.config['PRESERVE_TEMP_DB'] = true
 
+    You can specify the location of the temporary database instance
+    by setting TEMP_DB_LOC. If not specified, a default temp directory
+    location will be generated and used instead:
+        >> app.config['TEMP_DB_LOC'] = '/path/to/temp_dir/'
+
     @param config: Flask-MongoEngine application configuration.
 
     """
@@ -237,6 +290,9 @@ def create_connection(config):
 
     if config is None or not isinstance(config, dict):
         raise Exception("Invalid application configuration");
+
+    setattr(mongoengine.connection, '_connection_settings', _connection_settings)
+    setattr(mongoengine.connection, '_connections', _connections)
 
     conn_settings = fetch_connection_settings(config, False)
 

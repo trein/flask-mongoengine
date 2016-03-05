@@ -1,16 +1,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
-import inspect
+import mongoengine, inspect
 
 from flask import abort, current_app
-
-import mongoengine
-
-if mongoengine.__version__ == '0.7.10':
-    from mongoengine.base import BaseField
-else:
-    from mongoengine.base.fields import BaseField
-
+from mongoengine.base.fields import BaseField
 
 from mongoengine.queryset import MultipleObjectsReturned, \
     DoesNotExist, QuerySet
@@ -24,7 +17,7 @@ from .json import overide_json_encoder
 from .wtf import WtfBaseField
 from .connection import *
 
-def _patch_base_field(object, name):
+def _patch_base_field(obj, name):
     """
     If the object submitted has a class whose base class is
     mongoengine.base.fields.BaseField, then monkey patch to
@@ -37,12 +30,12 @@ def _patch_base_field(object, name):
     @see: flask_mongoengine.wtf.base.WtfBaseField.
     @see: model_form in flask_mongoengine.wtf.orm
 
-    @param object:  The object whose footprint to locate the class.
+    @param obj:     The object whose footprint to locate the class.
     @param name:    Name of the class to locate.
 
     """
     # locate class
-    cls = getattr(object, name)
+    cls = getattr(obj, name)
     if not inspect.isclass(cls):
         return
 
@@ -58,9 +51,8 @@ def _patch_base_field(object, name):
 
     # re-assign class back to
     # object footprint
-    delattr(object, name)
-    setattr(object, name, cls)
-
+    delattr(obj, name)
+    setattr(obj, name, cls)
 
 def _include_mongoengine(obj):
     for module in mongoengine, mongoengine.fields:
@@ -70,6 +62,20 @@ def _include_mongoengine(obj):
 
                 # patch BaseField if available
                 _patch_base_field(obj, key)
+
+def current_mongoengine_instance():
+    """
+    Obtain instance of MongoEngine in the
+    current working app instance.
+    """
+    if current_app:
+        me = current_app.extensions['mongoengine']
+        instance_dict = me.items()\
+            if (sys.version_info >= (3, 0)) else me.iteritems()
+        for k, v in instance_dict:
+            if isinstance(k, MongoEngine):
+                return k
+    return None
 
 class MongoEngine(object):
 
@@ -114,9 +120,11 @@ class MongoEngine(object):
         conn_settings = fetch_connection_settings(current_app.config)
         if isinstance(conn_settings, list):
             for setting in conn_settings:
-                disconnect(setting['alias'], setting['preserve_temp_db'])
+                disconnect(setting['alias'],
+                           setting.get('preserve_temp_db', False))
         else:
-            disconnect(conn_settings['alias'], conn_settings['preserve_temp_db'])
+            disconnect(conn_settings['alias'],
+                       conn_settings.get('preserve_temp_db', False))
         return True
 
     @property
