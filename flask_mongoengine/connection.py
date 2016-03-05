@@ -132,12 +132,11 @@ def _sys_exec(cmd, shell=True, env=None):
 def _register_test_connection(port, db_alias, preserved):
     # Lets check MongoDB is installed locally
     # before making connection to it
-
     try:
         found = _sys_exec("mongod --version") or False
     except:
         msg = 'You need `MongoDB` service installed on localhost'\
-              ' be able to create a TEMP_DB instance.'
+              ' to create a TEMP_DB instance.'
         raise RuntimeError(msg)
 
     if found:
