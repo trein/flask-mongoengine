@@ -176,8 +176,8 @@ def _register_test_connection(port, db_alias, preserved):
             port = 27111
 
         _tmpdir = current_app.config.get('TEMP_DB_LOC', tempfile.mkdtemp())
-        print("@@ TEMP_DB_LOC  = " + _tmpdir)
-        print("@@ TEMP_DB port = " + str(port))
+        print("@@ TEMP_DB_LOC  = %s" % _tmpdir)
+        print("@@ TEMP_DB port = %s" % str(port))
         print("@@ TEMP_DB host = localhost")
         _conn = _connections.get(db_alias, None)
 
