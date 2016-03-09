@@ -32,7 +32,8 @@ def disconnect(alias=DEFAULT_CONNECTION_NAME, preserved=False):
         _process.terminate()
         _process.wait()
         _process = None
-        if not preserved:
+
+        if preserved:
             shutil.rmtree(_tmpdir, ignore_errors=True)
             os.remove("{0}/{1}".\
                 format(tempfile.gettempdir(), 'mongodb-27111.sock'))
