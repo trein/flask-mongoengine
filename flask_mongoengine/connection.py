@@ -1,4 +1,4 @@
-import atexit, os, time, mongoengine, sys
+import atexit, os.path, time, mongoengine, sys
 import shutil, subprocess, tempfile
 from flask import current_app
 from pymongo import MongoClient, ReadPreference, errors, uri_parser
@@ -22,7 +22,7 @@ class InvalidSettingsError(Exception):
     pass
 
 def disconnect(alias=DEFAULT_CONNECTION_NAME, preserved=False):
-    global _connections, _dbsm, _process
+    global _connections, _process, _tmpdir
 
     if alias in _connections:
         get_connection(alias=alias).close()
@@ -33,10 +33,13 @@ def disconnect(alias=DEFAULT_CONNECTION_NAME, preserved=False):
         _process.wait()
         _process = None
 
-        if preserved:
+    if (not preserved and _tmpdir):
+        sock_file = 'mongodb-27111.sock'
+        if os.path.exists(_tmpdir):
             shutil.rmtree(_tmpdir, ignore_errors=True)
+        if os.path.exists(sock_file):
             os.remove("{0}/{1}".\
-                format(tempfile.gettempdir(), 'mongodb-27111.sock'))
+                format(tempfile.gettempdir(), sock_file))
 
 def _validate_settings(is_test, temp_db, preserved, conn_host):
     """
@@ -155,6 +158,8 @@ def _sys_exec(cmd, shell=True, env=None):
     return a.communicate()[0]
 
 def _register_test_connection(port, db_alias, preserved):
+    global _process, _tmpdir
+
     # Lets check MongoDB is installed locally
     # before making connection to it
     try:
