@@ -6,7 +6,6 @@ from pymongo.errors import InvalidURI
 from flask.ext.mongoengine import MongoEngine, InvalidSettingsError
 from tests import FlaskMongoEngineTestCase
 
-
 class ConnectionTestCase(FlaskMongoEngineTestCase):
 
     def ensure_mongomock_connection(self):
@@ -16,12 +15,9 @@ class ConnectionTestCase(FlaskMongoEngineTestCase):
         self.assertEqual(db_info['sysInfo'], "Mock", "Invalid MongoMock connection")
         self.assertTrue(isinstance(db.connection, mongomock.MongoClient))
 
-        # Finally close connection
-        self.assertTrue(db.disconnect())
-
     def test_mongomock_connection_request_on_most_recent_mongoengine(self):
         self.app.config['TESTING'] = True
-        self.app.config['MONGODB_ALIAS'] = 'unittest'
+        self.app.config['MONGODB_ALIAS'] = 'unittest_0'
         self.app.config['MONGODB_HOST'] = 'mongomock://localhost'
 
         if mongoengine.VERSION >= (0, 10, 6):
@@ -32,13 +28,14 @@ class ConnectionTestCase(FlaskMongoEngineTestCase):
         self.assertRaises(InvalidSettingsError, MongoEngine, self.app)
 
         self.app.config['TESTING'] = True
-        self.app.config['MONGODB_ALIAS'] = 'unittest'
+        self.app.config['MONGODB_ALIAS'] = 'unittest_1'
         self.app.config['MONGODB_HOST'] = 'mongomock://localhost'
 
         if mongoengine.VERSION < (0, 10, 6):
             self.ensure_mongomock_connection()
 
     def test_mongodb_temp_instance(self):
+        # String value used instead of boolean
         self.app.config['TESTING'] = True
         self.app.config['TEMP_DB'] = 'True'
         self.assertRaises(InvalidSettingsError, MongoEngine, self.app)
@@ -50,22 +47,26 @@ class ConnectionTestCase(FlaskMongoEngineTestCase):
         self.assertTrue(isinstance(db_info, dict))
         self.assertTrue(isinstance(db.connection, pymongo.MongoClient))
 
-        # Finally close connection
-        self.assertTrue(db.disconnect())
+    def test_InvalidURI_exception_connections(self):
+        # Invalid URI
+        self.app.config['TESTING'] = True
+        self.app.config['MONGODB_ALIAS'] = 'unittest_2'
+        self.app.config['MONGODB_HOST'] = 'mongo://localhost'
+        self.assertRaises(InvalidURI, MongoEngine, self.app)
 
     def test_parse_uri_if_testing_true_and_not_uses_mongomock_schema(self):
-        self.app.config['TESTING'] = True
-        self.app.config['MONGODB_ALIAS'] = 'unittest'
-        self.app.config['MONGODB_HOST'] = 'mongo://localhost'
-
-        self.assertRaises(InvalidURI, MongoEngine, self.app)
-
-    def test_parse_uri_if_testing_not_true(self):
+        # TESTING is false but mongomock URI
         self.app.config['TESTING'] = False
-        self.app.config['MONGODB_ALIAS'] = 'unittest'
+        self.app.config['MONGODB_ALIAS'] = 'unittest_3'
         self.app.config['MONGODB_HOST'] = 'mongomock://localhost'
-
         self.assertRaises(InvalidURI, MongoEngine, self.app)
+
+    def test_temp_db_with_false_testing(self):
+        # TEMP_DB is set to true but testing is false
+        self.app.config['TESTING'] = False
+        self.app.config['TEMP_DB'] = True
+        self.app.config['MONGODB_ALIAS'] = 'unittest_4'
+        self.assertRaises(InvalidSettingsError, MongoEngine, self.app)
 
 if __name__ == '__main__':
     unittest.main()

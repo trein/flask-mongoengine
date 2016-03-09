@@ -4,6 +4,7 @@ from flask import current_app
 from pymongo import MongoClient, ReadPreference, errors, uri_parser
 from mongoengine.python_support import IS_PYMONGO_3
 from subprocess import Popen, PIPE
+from pymongo.errors import InvalidURI
 
 __all__ = ['create_connection', 'disconnect', 'get_connection',
            'DEFAULT_CONNECTION_NAME', 'fetch_connection_settings',
@@ -36,6 +37,30 @@ def disconnect(alias=DEFAULT_CONNECTION_NAME, preserved=False):
             os.remove("{0}/{1}".\
                 format(tempfile.gettempdir(), 'mongodb-27111.sock'))
 
+def _validate_settings(is_test, temp_db, preserved, conn_host):
+    """
+    Validate unitest settings to ensure
+    valid values are supplied before obtaining
+    connection.
+
+    """
+    if (not isinstance(is_test, bool)
+        or not isinstance(temp_db, bool)
+        or not isinstance(preserved, bool)):
+        msg = '`TESTING`, `TEMP_DB`, and `PRESERVE_TEMP_DB`'\
+                ' must be boolean values'
+        raise InvalidSettingsError(msg)
+
+    elif not is_test and conn_host.startswith('mongomock://'):
+        msg = "`MongoMock` connection is only required for `unittest`."\
+                "To enable this set `TESTING` to true`."
+        raise InvalidURI(msg)
+
+    elif not is_test and temp_db or preserved:
+        msg = '`TESTING` and/or `TEMP_DB` can be used '\
+                'only when `TESTING` is set to true.'
+        raise InvalidSettingsError(msg)
+
 def get_connection(alias=DEFAULT_CONNECTION_NAME):
     global _connections
 
@@ -60,12 +85,11 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
         is_test = current_app.config.get('TESTING', False)
         temp_db = current_app.config.get('TEMP_DB', False)
         preserved = current_app.config.get('PRESERVE_TEMP_DB', False)
-        if (not isinstance(is_test, bool)
-            or not isinstance(temp_db, bool)
-            or not isinstance(preserved, bool)):
-            msg = '`TESTING`, `TEMP_DB`, and `PRESERVE_TEMP_DB` must be boolean values'
-            raise InvalidSettingsError(msg)
 
+        # Validation
+        _validate_settings(is_test, temp_db, preserved, conn_host)
+
+        # Obtain connection
         if is_test:
             if temp_db:
                 db_alias = conn_settings['alias']
@@ -289,9 +313,6 @@ def create_connection(config):
 
     if config is None or not isinstance(config, dict):
         raise Exception("Invalid application configuration");
-
-    setattr(mongoengine.connection, '_connection_settings', _connection_settings)
-    setattr(mongoengine.connection, '_connections', _connections)
 
     conn_settings = fetch_connection_settings(config, False)
 
