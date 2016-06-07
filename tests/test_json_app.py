@@ -20,6 +20,7 @@ class JSONAppTestCase(FlaskMongoEngineTestCase):
         super(JSONAppTestCase, self).setUp()
         self.app.config['MONGODB_DB'] = 'testing'
         self.app.config['TESTING'] = True
+        self.app.config['TEMP_DB'] = True
         db = MongoEngine()
 
         class Todo(db.Document):

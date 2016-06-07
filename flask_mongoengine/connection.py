@@ -5,12 +5,13 @@ from pymongo import MongoClient, ReadPreference, errors, uri_parser
 from mongoengine.python_support import IS_PYMONGO_3
 from subprocess import Popen, PIPE
 from pymongo.errors import InvalidURI
+from mongoengine import connection
 
 __all__ = ['create_connection', 'disconnect', 'get_connection',
            'DEFAULT_CONNECTION_NAME', 'fetch_connection_settings',
-           'InvalidSettingsError']
+           'InvalidSettingsError', 'get_db']
 
-DEFAULT_CONNECTION_NAME = 'default-sandbox'
+DEFAULT_CONNECTION_NAME = 'default-mongodb-sandbox'
 
 _connection_settings = {}
 _connections = {}
@@ -25,7 +26,12 @@ def disconnect(alias=DEFAULT_CONNECTION_NAME, preserved=False):
     global _connections, _process, _tmpdir
 
     if alias in _connections:
-        get_connection(alias=alias).close()
+        conn = get_connection(alias=alias);
+        client = conn.client
+        if client:
+            client.close()
+        else:
+            conn.close()
         del _connections[alias]
 
     if _process:
@@ -65,8 +71,12 @@ def _validate_settings(is_test, temp_db, preserved, conn_host):
                 'only when `TESTING` is set to true.'
         raise InvalidSettingsError(msg)
 
-def get_connection(alias=DEFAULT_CONNECTION_NAME):
+def get_connection(alias=DEFAULT_CONNECTION_NAME, reconnect=False):
     global _connections
+    set_global_attributes()
+
+    if reconnect:
+        disconnect(alias, _connection_settings.get('preserve_temp_db', False))
 
     # Establish new connection unless
     # already established
@@ -76,8 +86,8 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
             if alias == DEFAULT_CONNECTION_NAME:
                 msg = 'You have not defined a default connection'
             raise ConnectionError(msg)
-        conn_settings = _connection_settings[alias].copy()
 
+        conn_settings = _connection_settings[alias].copy()
         conn_host = conn_settings['host']
         db_name = conn_settings['name']
 
@@ -95,6 +105,8 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
 
         # Obtain connection
         if is_test:
+            connection_class = None
+
             if temp_db:
                 db_alias = conn_settings['alias']
                 port = conn_settings['port']
@@ -134,17 +146,22 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME):
                 connection_settings.pop('name', None)
                 connection_settings.pop('username', None)
                 connection_settings.pop('password', None)
-                if (conn_settings == connection_settings and
-                    _connections.get(db_alias, None)):
+
+                if _connections.get(db_alias, None):
                     connection = _connections[db_alias]
                     break
 
-            _connections[alias] = connection\
-                if connection else connection_class(**conn_settings)
+                if connection:
+                    _connections[alias] = connection
+                else:
+                    if connection_class:
+                        _connections[alias] = connection_class(**conn_settings)
 
         except Exception as e:
-            raise ConnectionError("Cannot connect to database %s :\n%s" % (alias, e))
-    return _connections[alias]
+            msg = "Cannot connect to database %s :\n%s" % (alias, e)
+            raise ConnectionError(msg)
+
+    return mongoengine.connection.get_db(alias)
 
 def _sys_exec(cmd, shell=True, env=None):
     if env is None:
@@ -154,8 +171,16 @@ def _sys_exec(cmd, shell=True, env=None):
     a.wait()  # Wait for process to terminate
     if a.returncode:  # Not 0 => Error has occured
         raise Exception(a.communicate()[1])
-
     return a.communicate()[0]
+
+def set_global_attributes():
+    setattr(connection, '_connection_settings', _connection_settings)
+    setattr(connection, '_connections', _connections)
+    setattr(connection, 'disconnect', disconnect)
+
+def get_db(alias=DEFAULT_CONNECTION_NAME, reconnect=False):
+    set_global_attributes()
+    return connection.get_db(alias, reconnect)
 
 def _register_test_connection(port, db_alias, preserved):
     global _process, _tmpdir
@@ -330,9 +355,6 @@ def create_connection(config):
             connections[alias] = get_connection(alias)
         return connections
     else:
-        alias = conn_settings['alias']
+        alias = conn_settings.get('alias', DEFAULT_CONNECTION_NAME)
         _connection_settings[alias] = conn_settings
         return get_connection(alias)
-
-# Support for old naming convensions
-_create_connection = create_connection

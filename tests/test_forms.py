@@ -29,7 +29,10 @@ class WTFormsAppTestCase(FlaskMongoEngineTestCase):
         self.db.init_app(self.app)
 
     def tearDown(self):
-        self.db.connection.drop_database(self.db_name)
+        try:
+            self.db.connection.drop_database(self.db_name)
+        except:
+            self.db.connection.client.drop_database(self.db_name)
 
     def test_binaryfield(self):
 
@@ -119,7 +122,7 @@ class WTFormsAppTestCase(FlaskMongoEngineTestCase):
 
             class LinkPost(BlogPost):
                 url = db.StringField(required=True)
-                interest =  db.DecimalField(required=True)
+                interest = db.DecimalField(required=True)
 
             # Create a text-based post
             TextPostForm = model_form(TextPost)
@@ -323,21 +326,21 @@ class WTFormsAppTestCase(FlaskMongoEngineTestCase):
             self.assertEqual(len(choices), 2)
             self.assertFalse(choices[0].checked)
             self.assertFalse(choices[1].checked)
-            
+
     def test_modelradiofield(self):
         with self.app.test_request_context('/'):
             db = self.db
-        
+
             choices = (('male', 'Male'), ('female', 'Female'), ('other', 'Other'))
-        
+
             class Poll(db.Document):
                 answer = db.StringField(choices=choices)
-    
+
             PollForm = model_form(Poll, field_args={'answer': {'radio': True}})
-        
+
             form = PollForm(answer=None)
             self.assertTrue(form.validate())
-        
+
             self.assertEqual(form.answer.type, 'RadioField')
             self.assertEqual(form.answer.choices, choices)
 

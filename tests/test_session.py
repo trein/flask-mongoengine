@@ -32,7 +32,10 @@ class SessionTestCase(FlaskMongoEngineTestCase):
         self.db = db
 
     def tearDown(self):
-        self.db.connection.drop_database(self.db_name)
+        try:
+            self.db.connection.drop_database(self.db_name)
+        except:
+            self.db.connection.client.drop_database(self.db_name)
 
     def test_setting_session(self):
         c = self.app.test_client()

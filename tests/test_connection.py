@@ -10,10 +10,7 @@ class ConnectionTestCase(FlaskMongoEngineTestCase):
 
     def ensure_mongomock_connection(self):
         db = MongoEngine(self.app)
-        db_info = db.connection.server_info()
-        self.assertTrue(isinstance(db_info, dict))
-        self.assertEqual(db_info['sysInfo'], "Mock", "Invalid MongoMock connection")
-        self.assertTrue(isinstance(db.connection, mongomock.MongoClient))
+        self.assertTrue(isinstance(db.connection.client, mongomock.MongoClient))
 
     def test_mongomock_connection_request_on_most_recent_mongoengine(self):
         self.app.config['TESTING'] = True
@@ -41,10 +38,7 @@ class ConnectionTestCase(FlaskMongoEngineTestCase):
         self.assertRaises(InvalidSettingsError, MongoEngine, self.app)
 
         self.app.config['TEMP_DB'] = True
-
         db = MongoEngine(self.app)
-        db_info = db.connection.server_info()
-        self.assertTrue(isinstance(db_info, dict))
         self.assertTrue(isinstance(db.connection, pymongo.MongoClient))
 
     def test_InvalidURI_exception_connections(self):
