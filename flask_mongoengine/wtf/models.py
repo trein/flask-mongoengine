@@ -1,4 +1,5 @@
 from flask_wtf import FlaskForm
+from flask_mongoengine.wtf.orm import model_fields
 
 
 class ModelForm(FlaskForm):
@@ -15,7 +16,8 @@ class ModelForm(FlaskForm):
         if self.instance:
             self.populate_obj(self.instance)
         else:
-            self.instance = self.model_class(**self.data)
+            valid_data = {field: self.data.get(field) for field in model_fields(self.model_class)}
+            self.instance = self.model_class(**valid_data)
 
         if commit:
             self.instance.save(**kwargs)
